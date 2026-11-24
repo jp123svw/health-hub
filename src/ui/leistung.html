@@ -1,0 +1,113 @@
+  <!-- LEISTUNG -->
+  <section data-tab="leistung" hidden>
+    <h2>Statistiken</h2>
+    <div class="card" id="vo2-card">
+      <h3>VO2max</h3>
+      <p class="note">Kommt automatisch aus deinen Läufen und Radfahrten (Garmins Wert je Einheit). Fehlt ein Wert, trägst du ihn unten selbst ein.</p>
+      <div class="tiles" id="vo2-tiles"></div>
+      <div id="vo2-status"></div>
+      <div class="legend"><span><i class="ln" style="background:var(--accent)"></i>Laufen</span><span><i class="ln" style="background:var(--accent-2)"></i>Rad</span><span><i style="background:var(--accent);opacity:.12"></i>Gewählter Zeitraum</span></div>
+      <div class="chart small" id="c-vo2"></div>
+      <!-- Selbst eintragen (#96): direkt beim Verlauf statt im Konto -->
+      <details class="fold" id="vo2-entry">
+        <summary>VO2max selbst eintragen</summary>
+        <p class="note">Nur nötig, wenn ein Wert fehlt oder du ihn korrigieren willst. Dein Eintrag gilt für diesen Tag und Vorrang vor Garmins Wert.</p>
+        <form class="form" id="vo2-form" novalidate>
+          <div class="fields">
+            <label>Datum<input type="date" id="vo2-date" required></label>
+            <label>Sportart<select id="vo2-sport"><option value="run">Laufen</option><option value="ride">Rad</option></select></label>
+            <label>VO2max<input type="number" id="vo2-val" inputmode="numeric" min="20" max="95" step="1" placeholder="z. B. 58" required></label>
+          </div>
+          <div class="row"><button class="btn" type="submit">Eintragen</button></div>
+          <p class="msg" id="vo2-msg" role="status"></p>
+        </form>
+        <p class="note">Deine Einträge (<span id="vo2-count">0</span>)</p>
+        <ul class="sessions" id="vo2-list"></ul>
+      </details>
+    </div>
+    <!-- Fitnessalter von Garmin (#78): oben das Wichtigste, Bausteine zum Ausklappen -->
+    <div class="card fitage" id="fitage-card">
+      <h3>Fitnessalter</h3>
+      <div class="fa-head"><span class="fa-val" id="fa-val">–</span><span class="fa-side" id="fa-side"></span></div>
+      <p class="fa-cmp" id="fa-cmp"></p>
+      <details class="fold" id="fa-more">
+        <summary>Was dich jünger macht <span class="fold-n" id="fa-count"></span></summary>
+        <ul class="fa-list" id="fa-list" aria-label="Bausteine des Fitnessalters"></ul>
+        <p class="note" id="fa-note"></p>
+      </details>
+    </div>
+    <!-- Gewicht und Körperzusammensetzung (#3), bevorzugt von der Withings-Waage -->
+    <div class="card" id="body-card">
+      <h3>Gewicht und Körper</h3>
+      <div class="fa-head"><span class="fa-val" id="bd-val">–</span><span class="fa-side" id="bd-side"></span></div>
+      <p class="fa-cmp" id="bd-cmp"></p>
+      <details class="fold" id="bd-more">
+        <summary>Körperwerte und Verlauf</summary>
+        <div class="bd-grid" id="bd-grid"></div>
+        <div class="spark" id="bd-spark"></div>
+        <p class="note" id="bd-note"></p>
+      </details>
+    </div>
+    <div class="card">
+      <h3>Zeit in Herzfrequenzzonen</h3>
+      <p class="note" id="hz-note"></p>
+      <div class="legend"><span><i style="background:var(--accent)"></i>Gewählter Zeitraum</span><span><i style="background:var(--prev)"></i>Zeitraum davor</span></div>
+      <div class="zbars" id="hz-bars"></div>
+    </div>
+    <div class="card">
+      <h3>Pace je Zone</h3>
+      <div class="hrsel" id="hr-tiles" role="group" aria-label="Zone wählen"></div>
+      <div class="chart" id="c-hrpace"></div>
+      <p class="note" id="hrpace-text"></p>
+    </div>
+    <div class="grid">
+      <div class="card">
+        <h3>Laufökonomie</h3>
+        <p class="note">Meter pro Herzschlag bei Läufen ab 3 km mit Puls unter Zone 4. Höher ist besser. Linie: gleitender Schnitt über 5 Läufe.</p>
+        <div class="chart" id="c-eff"></div>
+      </div>
+      <div class="card">
+        <h3>Pace-Entwicklung</h3>
+        <p class="note">Steigungsbereinigte Pace je Lauf. Ruhige Einheiten (Erholung, Grundlage) und intensive Einheiten getrennt.</p>
+        <div class="legend"><span><i style="background:var(--accent)"></i>Ruhig</span><span><i style="background:var(--accent-2)"></i>Intensiv</span></div>
+        <div class="chart" id="c-pace"></div>
+      </div>
+    </div>
+    <div class="card" id="pred-card">
+      <h3>Wettkampfprognosen</h3>
+      <div class="tiles" id="pred-tiles"></div>
+      <div class="chips pred-src" id="pred-src" aria-label="Verwendete Quellen"></div>
+      <details class="fold" id="pred-more">
+        <summary>Wie wird das berechnet?</summary>
+        <ul class="pred-why" id="pred-why"></ul>
+        <p class="note" id="pred-note"></p>
+        <p class="note" id="pred-alt"></p>
+      </details>
+    </div>
+    <!-- Bestleistungen wie bei Strava: Laufen und Rad, Strecke und Leistung (Watt), gesamt oder dieses Jahr -->
+    <div class="card" id="best-card">
+      <h3>Bestleistungen</h3>
+      <div class="best-ctl" id="best-ctl"></div>
+      <ul class="sessions best-list" id="best-list"></ul>
+      <p class="note" id="best-note"></p>
+    </div>
+    <!-- Wetter und Tempo (#54): nur mit Wetter-Haken und genug Läufen -->
+    <div class="card" id="wx-card" hidden>
+      <h3>Wetter und Tempo</h3>
+      <p class="wx-head" id="wx-head"></p>
+      <ul class="sessions" id="wx-list"></ul>
+      <p class="note">Jeder Lauf ab 3 km verglichen mit deinem üblichen Tempo in den Wochen davor und danach. Grün schneller, rot langsamer. Wetter von Open-Meteo zur Mitte des Laufs.</p>
+    </div>
+    <div class="grid">
+      <div class="card">
+        <h3>Laufdynamik</h3>
+        <p class="note">Mittelwerte der Läufe ab 3 km.</p>
+        <div class="tablewrap"><table id="t-dyn"></table></div>
+      </div>
+    </div>
+    <div class="card">
+      <h3>Rad: Leistung pro Herzschlag</h3>
+      <div class="chart small" id="c-bike"></div>
+    </div>
+  </section>
+

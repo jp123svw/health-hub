@@ -1,0 +1,204 @@
+// ---------- BELASTUNG ----------
+function renderLoad() {
+  const { cur, prev } = ranges();
+  const series = loadSeries(cur[0], cur[1]);
+  const last = series[series.length - 1];
+  const actsCur = S.acts.filter((a) => inR(a.date, cur)), actsPrev = S.acts.filter((a) => inR(a.date, prev));
+  // Kennzahlen als Zeilen wie auf „Heute“ (#159): Wert der letzten 7 Tage, Verlauf über 8 Wochen, „Dein Bereich“
+  loadRows();
+
+  // Akut/chronisch
+  const node = $('#c-acwr');
+  if (!series.some((s) => s.v)) empty(node, 'Keine Einheiten im Zeitraum.');
+  else {
+    const f = frame(node, 230);
+    const y = d3.scaleLinear([0, d3.max(series, (s) => Math.max(s.acute || 0, s.chronic || 0)) * 1.1], [f.h - 22, 8]).nice();
+    const ml = AXIS_L;
+    const x = d3.scaleUtc([parse(cur[0]), parse(cur[1])], [ml, f.w - 10]);
+    yAxis(f, y, ml, f.w - 10, 4, (v) => num(v)); xTime(f, x, f.h - 22);
+    // Zone, in der akut mehr als das 1,5-Fache von chronisch beträgt
+    const risk = series.filter((s) => s.chronic && s.acute > 1.5 * s.chronic);
+    f.svg.append('g').selectAll('rect').data(risk).join('rect')
+      .attr('x', (s) => x(parse(s.d)) - 2).attr('width', 4).attr('y', 8).attr('height', f.h - 30).style('fill', css('--bad')).style('opacity', .18);
+    glowLine(f, series.filter((s) => s.chronic != null), { x: (s) => x(parse(s.d)), y: (s) => y(s.chronic), color: css('--prev'), width: 2, area: false });
+    glowLine(f, series.filter((s) => s.acute != null), { x: (s) => x(parse(s.d)), y: (s) => y(s.acute), base: f.h - 22, dot: true });
+    const bis = d3.bisector((s) => parse(s.d)).center;
+    hoverLayer(f, { x0: ml, x1: f.w - 10, y0: 8, y1: f.h - 22 }, (px) => {
+      const s = series[bis(series, x.invert(px))]; if (!s) return null;
+      return { x: x(parse(s.d)), y: y(s.acute || 0), title: dayLabel(s.d), lines: [
+        { color: css('--accent'), label: 'Akut (Ø 7 Tage)', value: num(s.acute) },
+        { color: css('--prev'), label: 'Chronisch (Ø 28 Tage)', value: num(s.chronic) },
+        { label: 'Verhältnis', value: s.chronic ? num(s.acute / s.chronic, 2) : '–' },
+        { label: 'Last an diesem Tag', value: num(s.v) }] };
+    });
+  }
+
+  // Kategorien pro Woche
+  const lg = $('#cat-legend'); lg.replaceChildren();
+  for (const c of CATS) { const s = el('span'); const i = el('i'); i.style.background = c[2]; s.append(i, c[1]); lg.append(s); }
+  $('#h-cats').textContent = 'Art der Einheiten pro ' + (bucketDays() === 1 ? 'Tag' : 'Woche');
+  const weeks = weeksIn(cur);
+  const rows = weeks.map((wk) => {
+    const r = { wk };
+    for (const c of CATS) r[c[1]] = sum(S.acts.filter((a) => a.date >= wk && a.date <= addDays(wk, bucketDays() - 1) && catOf(a.label) === c).map((a) => a.min)) / 60;
+    return r;
+  });
+  stackedWeeks($('#c-cats'), rows, CATS.map((c) => ({ key: c[1], color: c[2] })), (v) => num(v, 1) + ' h');
+
+  // Tabelle Verteilung
+  const t = $('#t-cats'); t.replaceChildren();
+  const head = el('tr'); head.append(el('th', null, 'Kategorie'), el('th', 'n', 'Davor'), el('th', 'n', 'Jetzt'), el('th', 'n', 'Einheiten'));
+  t.append(head);
+  const tot = (arr) => sum(arr.map((a) => a.min)) || 1;
+  for (const c of CATS) {
+    const a = actsCur.filter((x) => catOf(x.label) === c), b = actsPrev.filter((x) => catOf(x.label) === c);
+    if (!a.length && !b.length) continue;
+    const tr = el('tr');
+    const name = el('td'); const sw = el('i'); sw.style.cssText = `display:inline-block;width:8px;height:8px;border-radius:2px;margin-right:6px;background:${c[2]}`; name.append(sw, c[1]);
+    tr.append(name, el('td', 'n', num(sum(b.map((x) => x.min)) / tot(actsPrev) * 100) + ' %'), el('td', 'n', num(sum(a.map((x) => x.min)) / tot(actsCur) * 100) + ' %'), el('td', 'n', String(a.length)));
+    t.append(tr);
+  }
+
+}
+
+// Belastung als Zeilen (#159). Immer die letzten 7 Tage bis heute; „Dein Bereich“ = Schnitt ± Streuung der 8 Wochen davor
+// (Last: fester grüner Bereich 0,8–1,3 wie in der Ampel). Antippen öffnet das Diagramm darunter bzw. im Vollbild.
+function loadRows() {
+  const box = $('#load-tiles'); box.className = 'mrows load-rows'; box.replaceChildren(rowHead('8 Wochen'));
+  const today = S.today;
+  // je 7-Tage-Fenster rückwärts: 0 = letzte 7 Tage, 1 = die 7 davor …
+  const win = (i) => S.acts.filter((a) => a.date > addDays(today, -7 * (i + 1)) && a.date <= addDays(today, -7 * i));
+  const hardN = (arr) => arr.filter((a) => (a.te || 0) >= 4 || (a.teAn || 0) >= 3).length;
+  const calm = (arr) => { const t = sum(arr.map((a) => a.min)); return t ? (sum(arr.filter((a) => ['RECOVERY', 'AEROBIC_BASE'].includes(a.label)).map((a) => a.min)) / t) * 100 : null; };
+  const wk = (fn) => Array.from({ length: 9 }, (_, i) => fn(win(i))); // [jetzt, davor, …] 9 Werte
+  const own = (vals) => { const b = vals.slice(1).filter((v) => v != null); if (b.length < 4) return null; const m = mean(b), sd = Math.sqrt(mean(b.map((v) => (v - m) ** 2))); return [Math.max(0, m - sd), m + sd]; };
+  const spark = (vals) => vals.map((v, i) => ({ d: addDays(today, -7 * i), v })).reverse();
+  // Last akut zu chronisch, Verlauf der letzten 8 Wochen wöchentlich
+  const ser = loadSeries(addDays(today, -56), today);
+  const rAt = (d) => { const s = ser.find((x) => x.d === d); return s && s.chronic ? s.acute / s.chronic : null; };
+  const ratios = Array.from({ length: 9 }, (_, i) => rAt(addDays(today, -7 * i)));
+  const r = ratios[0];
+  mrow(box, { label: 'Last', value: r == null ? '–' : num(r, 2), v: r, range: r == null ? null : [0.8, 1.3], up: false, fmt: (v) => num(v, 1), spark: spark(ratios), open: () => openChart('c-acwr') });
+  const loads = wk((a) => sum(a.map((x) => x.load)));
+  mrow(box, { label: 'Wochenlast', value: num(loads[0]), v: loads[0], range: own(loads), up: null, fmt: (v) => num(v), spark: spark(loads), open: () => openChart('c-acwr') });
+  const hards = wk(hardN);
+  mrow(box, { label: 'Harte Einheiten', value: String(hards[0]), v: hards[0], range: own(hards), up: null, fmt: (v) => num(v, 1), spark: spark(hards), open: () => openChart('c-cats') });
+  const calms = wk(calm);
+  mrow(box, { label: 'Anteil ruhig', value: calms[0] == null ? '–' : num(calms[0]), unit: calms[0] == null ? '' : ' %', v: calms[0], range: calms[0] == null ? null : [70, 90], up: true, fmt: (v) => num(v), spark: spark(calms), open: () => openChart('c-cats') });
+  box.append(el('p', 'note', 'Letzte 7 Tage. Last = Belastung der letzten 7 Tage im Verhältnis zu den letzten 28 Tagen, gut zwischen 0,8 und 1,3; darüber steigt das Verletzungsrisiko. Ruhig = Erholung und Grundlage, für Ausdauer sind 70–90 % üblich. Sonst ist „Dein Bereich“ dein Schnitt der 8 Wochen davor.'));
+}
+
+function stackedWeeks(node, rows, keys, fmt) {
+  if (!rows.some((r) => keys.some((k) => r[k.key] > 0))) { empty(node, 'Keine Einheiten im Zeitraum.'); return; }
+  const f = frame(node, 230);
+  const tickFmt = (v) => num(v, Number.isInteger(v) ? 0 : 1); // halbe Stunden nicht als doppelte Ganzzahl zeigen
+  const stack = d3.stack().keys(keys.map((k) => k.key))(rows);
+  const y = d3.scaleLinear([0, d3.max(stack[stack.length - 1], (d) => d[1])], [f.h - 22, 8]).nice();
+  const ml = AXIS_L;
+  const x = d3.scaleBand(rows.map((r) => r.wk), [ml, f.w - 6]).padding(0.25);
+  yAxis(f, y, ml, f.w - 6, 4, tickFmt);
+  const bw = Math.min(28, x.bandwidth()), off = (x.bandwidth() - bw) / 2;
+  stack.forEach((layer, i) => {
+    f.svg.append('g').selectAll('rect').data(layer).join('rect').attr('class', 'bar').attr('rx', 1)
+      .attr('x', (d) => x(d.data.wk) + off).attr('width', bw).attr('y', (d) => y(d[1])).attr('height', (d) => Math.max(0, y(d[0]) - y(d[1])))
+      .style('fill', keys[i].color);
+  });
+  const every = Math.ceil(rows.length / Math.max(1, Math.floor((f.w - ml) / (bucketDays() === 1 ? 32 : 48))));
+  rows.forEach((r, i) => { if (i % every) return; const t = parse(r.wk); f.svg.append('text').attr('x', x(r.wk) + x.bandwidth() / 2).attr('y', f.h - 7).attr('text-anchor', 'middle').text(bucketDays() === 1 ? WD[t.getUTCDay()] : t.getUTCDate() + '.' + (t.getUTCMonth() + 1) + '.'); });
+  hoverLayer(f, { x0: ml, x1: f.w - 6, y0: 8, y1: f.h - 22 }, (px) => {
+    const i = Math.max(0, Math.min(rows.length - 1, Math.floor((px - ml - x.step() * x.paddingOuter()) / x.step())));
+    const r = rows[i]; const total = sum(keys.map((k) => r[k.key]));
+    return { x: x(r.wk) + x.bandwidth() / 2, y: y(total), title: (bucketDays() === 1 ? '' : 'Woche ab ') + dayLabel(r.wk),
+      lines: [{ label: 'Gesamt', value: fmt(total) }, ...keys.filter((k) => r[k.key] > 0).map((k) => ({ color: k.color, label: k.key, value: fmt(r[k.key]) }))] };
+  }, false);
+}
+
+// ---------- VOLUMEN ----------
+function renderVolume() {
+  const { cur, prev } = ranges();
+  const A = S.acts.filter((a) => inR(a.date, cur)), B = S.acts.filter((a) => inR(a.date, prev));
+  const tiles = $('#vol-tiles'); tiles.replaceChildren();
+  const h = (arr) => sum(arr.map((a) => a.min)) / 60;
+  tile(tiles, { label: 'Stunden gesamt', value: num(h(A), 1), unit: ' h', cmp: cmpLine(h(A), h(B), 1, null, ' h') });
+  tile(tiles, { label: 'Einheiten', value: String(A.length), cmp: cmpLine(A.length, B.length, 0, null) });
+  const km = (arr, key) => sum(arr.filter((a) => sportOf(a.type).key === key).map((a) => a.km));
+  tile(tiles, { label: 'Laufen', value: num(km(A, 'run'), 0), unit: ' km', cmp: cmpLine(km(A, 'run'), km(B, 'run'), 0, null, ' km') });
+  tile(tiles, { label: 'Rad', value: num(km(A, 'ride'), 0), unit: ' km', cmp: cmpLine(km(A, 'ride'), km(B, 'ride'), 0, null, ' km') });
+  tile(tiles, { label: 'Höhenmeter', value: num(sum(A.map((a) => a.elev)), 0), unit: ' m', cmp: cmpLine(sum(A.map((a) => a.elev)), sum(B.map((a) => a.elev)), 0, null, ' m') });
+  tile(tiles, { label: 'Schritte pro Tag', value: num(mean(S.daily.filter((d) => inR(d.d, cur)).map((d) => d.steps)), 0), cmp: cmpLine(mean(S.daily.filter((d) => inR(d.d, cur)).map((d) => d.steps)), mean(S.daily.filter((d) => inR(d.d, prev)).map((d) => d.steps)), 0, null) });
+
+  const lg = $('#sport-legend'); lg.replaceChildren();
+  for (const s of SPORTS) { const sp = el('span'); const i = el('i'); i.style.background = color(s.color); sp.append(i, s.label); lg.append(sp); }
+  $('#h-vol').textContent = 'Stunden pro ' + (bucketDays() === 1 ? 'Tag' : 'Woche') + ' nach Sportart';
+  const rows = weeksIn(cur).map((wk) => {
+    const r = { wk };
+    for (const s of SPORTS) r[s.label] = sum(S.acts.filter((a) => a.date >= wk && a.date <= addDays(wk, bucketDays() - 1) && sportOf(a.type) === s).map((a) => a.min)) / 60;
+    return r;
+  });
+  stackedWeeks($('#c-vol'), rows, SPORTS.map((s) => ({ key: s.label, color: color(s.color) })), (v) => num(v, 1) + ' h');
+}
+
+// ---------- FITNESS UND FORM (#48) ----------
+// Fitness (CTL) und Ermüdung (ATL) als exponentiell gleitende Mittel der täglichen Garmin-Trainingslast über 42 bzw.
+// 7 Tage, Form (TSB) = Fitness minus Ermüdung vom Vortag. Garmins Last ist anders skaliert als TrainingPeaks-TSS,
+// deshalb wird die Form relativ zur Fitness bewertet (Form / Fitness).
+const FORM_TEXT = [
+  [0.25, 'Sehr frisch', 'Lange wenig trainiert, die Fitness sinkt langsam.', 'warn'],
+  [0.05, 'Frisch', 'Ausgeruht, gute Zeit für einen Wettkampf oder eine harte Einheit.', 'good'],
+  [-0.10, 'Ausgeglichen', 'Training und Erholung halten sich die Waage.', ''],
+  [-0.30, 'Im Aufbau', 'Spürbare Ermüdung durch Training, so wird die Fitness besser.', ''],
+  [-Infinity, 'Hohe Ermüdung', 'Deutlich mehr Last als gewohnt, auf Erholung achten.', 'bad'],
+];
+const formOf = (tsb, ctl) => FORM_TEXT.find(([lim]) => (ctl > 0 ? tsb / ctl : 0) > lim);
+function formSeries(to) {
+  const m = dailyLoad();
+  const first = S.acts.length ? S.acts[0].date : to;
+  const out = [];
+  let ctl = 0, atl = 0;
+  for (let d = first; d <= to; d = addDays(d, 1)) {
+    const tsb = ctl - atl; // Form zu Tagesbeginn: Stand vom Vortag
+    const l = m.get(d) || 0;
+    ctl += (l - ctl) / 42; atl += (l - atl) / 7;
+    out.push({ d, ctl, atl, tsb, l });
+  }
+  return out;
+}
+function renderForm() {
+  const { cur } = ranges();
+  const all = formSeries(cur[1]);
+  const series = all.filter((s) => s.d >= cur[0]);
+  const tiles = $('#form-tiles'); tiles.replaceChildren();
+  const node = $('#c-form');
+  // Erst nach ein paar Wochen Training aussagekräftig
+  if (all.length < 28 || !series.length) { empty(node, 'Noch zu wenig Trainingshistorie (mindestens 4 Wochen).'); $('#form-note').textContent = ''; return; }
+  const last = series[series.length - 1], start = series[0];
+  const fm = formOf(last.tsb, last.ctl);
+  tile(tiles, { label: 'Fitness', value: num(last.ctl), cmp: cmpLine(last.ctl, start.ctl, 0, true) });
+  tile(tiles, { label: 'Ermüdung', value: num(last.atl), cmp: cmpLine(last.atl, start.atl, 0, null) });
+  tile(tiles, { label: 'Form', value: (last.tsb > 0 ? '+' : '') + num(last.tsb), cmp: { text: fm[1], cls: fm[3] } });
+  $('#form-note').textContent = fm[1] + ': ' + fm[2] + ' Bewertet wird die Form im Verhältnis zur Fitness (über +25 % sehr frisch, +5 bis +25 % frisch, −10 bis +5 % ausgeglichen, −30 bis −10 % im Aufbau, darunter hohe Ermüdung). Eigene Berechnung, keine Garmin- oder Strava-Zahl.';
+
+  const f = frame(node, 230);
+  const lo = Math.min(0, d3.min(series, (s) => s.tsb)), hi = d3.max(series, (s) => Math.max(s.ctl, s.atl));
+  const y = d3.scaleLinear([lo, hi * 1.08], [f.h - 22, 8]).nice();
+  const ml = AXIS_L;
+  const x = d3.scaleUtc([parse(cur[0]), parse(cur[1])], [ml, f.w - 10]);
+  yAxis(f, y, ml, f.w - 10, 4, (v) => num(v)); xTime(f, x, f.h - 22);
+  // Form als Balken um die Nulllinie: frisch grün, im Aufbau grau, hohe Ermüdung rot
+  const bw = Math.max(1.5, (f.w - ml - 10) / (series.length + 1) - 1);
+  f.svg.append('g').selectAll('rect').data(series).join('rect').attr('class', 'bar')
+    .attr('x', (s) => x(parse(s.d)) - bw / 2).attr('width', bw).attr('rx', Math.min(1, bw / 2))
+    .attr('y', (s) => y(Math.max(0, s.tsb))).attr('height', (s) => Math.abs(y(s.tsb) - y(0)))
+    .style('fill', (s) => { const k = formOf(s.tsb, s.ctl)[3]; return k === 'good' ? css('--ok') : k === 'bad' ? css('--bad') : css('--prev'); });
+  glowLine(f, series, { x: (s) => x(parse(s.d)), y: (s) => y(s.atl), color: css('--accent-2'), width: 1.5, area: false });
+  glowLine(f, series, { x: (s) => x(parse(s.d)), y: (s) => y(s.ctl), base: y(Math.max(0, lo)), dot: true });
+  const bis = d3.bisector((s) => parse(s.d)).center;
+  hoverLayer(f, { x0: ml, x1: f.w - 10, y0: 8, y1: f.h - 22 }, (px) => {
+    const s = series[bis(series, x.invert(px))]; if (!s) return null;
+    return { x: x(parse(s.d)), y: y(s.ctl), title: dayLabel(s.d), lines: [
+      { color: css('--accent'), label: 'Fitness', value: num(s.ctl) },
+      { color: css('--accent-2'), label: 'Ermüdung', value: num(s.atl) },
+      { label: 'Form', value: (s.tsb > 0 ? '+' : '') + num(s.tsb) + ' · ' + formOf(s.tsb, s.ctl)[1] },
+      { label: 'Last an diesem Tag', value: num(s.l) }] };
+  });
+}
